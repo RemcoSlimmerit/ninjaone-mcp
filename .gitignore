@@ -5,3 +5,5 @@ dist/
 .DS_Store
 coverage/
 .npmrc.docker
+graphify-out/
+.wrangler/

@@ -2,6 +2,32 @@
 
 ### Fixed
 
+- One-click deploys (Cloudflare Workers, DigitalOcean App Platform) no longer fail
+  with `npm error 401 Unauthorized ... npm.pkg.github.com` ([#33](https://github.com/wyre-technology/ninjaone-mcp/issues/33)).
+  `.npmrc` now carries an `_authToken=${NODE_AUTH_TOKEN}` line so the cloud builder
+  can authenticate to GitHub Packages, and the README documents the required
+  GitHub PAT (`read:packages`) build variable. `.do/app.yaml` declares a
+  build-time `GITHUB_TOKEN` secret, and the Cloudflare entrypoint now bundles
+  directly from `src/worker.ts`.
+
+### Added
+
+- **Cloudflare Workers now serves the full MCP server.** `src/worker.ts` was a
+  placeholder that returned a stub response; it now uses the MCP SDK's
+  `WebStandardStreamableHTTPServerTransport` to serve the complete tool set over
+  `/mcp`, reusing the same `createMcpServer()` factory as the stdio and Node HTTP
+  entrypoints (extracted into `src/mcp-server.ts` — no duplicated tool logic).
+  Supports both env-var credentials and `AUTH_MODE=gateway` header credentials,
+  plus CORS preflight and a `/health` probe. Verified end-to-end on `workerd`
+  (`wrangler dev`): `initialize`, `tools/list` (24 tools), and `tools/call` all
+  return correct JSON-RPC responses.
+
+### Changed
+
+- The package is now published to the GitHub Packages npm registry
+  (`@semantic-release/npm` `npmPublish: true` + `publishConfig.registry`), so
+  `npm install` / `npx @wyre-technology/ninjaone-mcp` resolve once authenticated.
+
 - `GET /health` (and new `/healthz`) is now a shallow, unauthenticated liveness
   probe that always returns `200 {"status":"ok"}`. It no longer calls
   `getCredentials()`. In gateway mode (`AUTH_MODE=gateway`) credentials only

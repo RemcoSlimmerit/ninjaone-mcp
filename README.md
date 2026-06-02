@@ -5,9 +5,35 @@ A Model Context Protocol (MCP) server for interacting with NinjaOne, featuring a
 
 ## One-Click Deployment
 
+> [!IMPORTANT]
+> **Before you click:** this server depends on `@wyre-technology/node-ninjaone`,
+> which is hosted on the **GitHub Packages** npm registry. GitHub Packages has no
+> anonymous access — even though the package is public, every `npm install` needs a
+> token. The cloud builder runs `npm install` for you, so you must give it one, or
+> the build fails with `npm error 401 Unauthorized ... npm.pkg.github.com`.
+>
+> 1. Create a GitHub **Personal Access Token** with the `read:packages` scope
+>    ([classic token](https://github.com/settings/tokens/new?scopes=read:packages&description=ninjaone-mcp%20deploy)).
+>    Any GitHub account works — you do **not** need to be a member of the
+>    `wyre-technology` org to read its public packages.
+> 2. Add it as a build variable when prompted by the deploy flow:
+>    - **Cloudflare Workers** → set a build variable named **`NODE_AUTH_TOKEN`** to your PAT
+>      (Workers → Settings → Build → Variables and Secrets).
+>    - **DigitalOcean App Platform** → set an encrypted env var named **`GITHUB_TOKEN`**
+>      with scope **Build Time** to your PAT (the `.do/app.yaml` already declares it).
+
 [![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/wyre-technology/ninjaone-mcp/tree/main)
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wyre-technology/ninjaone-mcp)
+
+> [!NOTE]
+> Both targets run the **full** MCP server. DigitalOcean builds the Docker image and
+> serves it over HTTP; Cloudflare Workers serves the same server via the SDK's Web
+> Standard Streamable HTTP transport (`src/worker.ts`). After deploying, set your
+> NinjaOne credentials as secrets — `NINJAONE_CLIENT_ID`, `NINJAONE_CLIENT_SECRET`,
+> and optionally `NINJAONE_REGION` — or set `AUTH_MODE=gateway` to take credentials
+> per-request from `X-Ninja-*` headers. The MCP endpoint is `/mcp`; `/health` is an
+> unauthenticated liveness probe.
 
 ## Architecture
 
@@ -26,9 +52,21 @@ This architecture provides:
 
 ## Installation
 
+This package is published to the **GitHub Packages** npm registry, which requires a
+token even for public packages. Authenticate once, then install:
+
 ```bash
+# Authenticate npm to GitHub Packages (token needs the read:packages scope)
+export NODE_AUTH_TOKEN=$(gh auth token)   # or a PAT with read:packages
+
 npm install @wyre-technology/ninjaone-mcp
 ```
+
+The repo's `.npmrc` already points the `@wyre-technology` scope at GitHub Packages and
+reads the token from `NODE_AUTH_TOKEN`, so no further config is needed. The same applies
+to `npx @wyre-technology/ninjaone-mcp` below. Prefer a zero-setup option? Use the prebuilt
+container image (`ghcr.io/wyre-technology/ninjaone-mcp`) or the `.mcpb` bundle attached to
+each [release](https://github.com/wyre-technology/ninjaone-mcp/releases).
 
 ## Configuration
 

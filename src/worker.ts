@@ -1,158 +1,128 @@
 /**
- * Cloudflare Workers entry point for NinjaOne MCP Server
+ * Cloudflare Workers entry point for the NinjaOne MCP Server.
  *
- * Handles HTTP requests in a serverless environment.
- * Credentials are expected via gateway headers:
- * - X-Ninja-Client-ID
- * - X-Ninja-Client-Secret
- * - X-Ninja-Region (optional, defaults to "us"; valid: us, eu, oc, ca, us2, fed)
+ * Serves the full MCP server over the Streamable HTTP transport using the SDK's
+ * Web Standard transport (Request/Response), which runs natively on Workers.
+ * It reuses the exact same `createMcpServer()` factory as the stdio / Node HTTP
+ * entrypoints (see `mcp-server.ts`), so there is no second tool implementation
+ * to maintain.
+ *
+ * Credentials are resolved per request, in order:
+ * 1. Gateway headers (when AUTH_MODE=gateway):
+ *    - X-Ninja-Client-ID
+ *    - X-Ninja-Client-Secret
+ *    - X-Ninja-Region (optional; us, eu, oc, ca, us2, fed)
+ * 2. Worker secrets / vars (env mode):
+ *    - NINJAONE_CLIENT_ID
+ *    - NINJAONE_CLIENT_SECRET
+ *    - NINJAONE_REGION (optional)
+ *
+ * `tools/list` and `initialize` work without credentials; only `tools/call`
+ * requires them.
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+  createMcpServer,
+  resolveGatewayCredentials,
+  buildCredentials,
+  type NinjaOneCredentials,
+} from "./mcp-server.js";
 
 export interface Env {
   NINJAONE_CLIENT_ID?: string;
   NINJAONE_CLIENT_SECRET?: string;
   NINJAONE_REGION?: string;
+  AUTH_MODE?: string;
+  LOG_LEVEL?: string;
 }
 
-/**
- * Create a fresh MCP server instance for each request
- * Workers are stateless, so we set up the server per-invocation
- */
-function createMcpServer(): Server {
-  const server = new Server(
-    {
-      name: "ninjaone-mcp",
-      version: "1.0.0",
-    },
-    {
-      capabilities: {
-        tools: {},
-      },
-    }
-  );
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers":
+    "Content-Type, Accept, Authorization, Mcp-Session-Id, MCP-Protocol-Version, X-Ninja-Client-ID, X-Ninja-Client-Secret, X-Ninja-Region",
+  "Access-Control-Expose-Headers": "Mcp-Session-Id",
+};
 
-  // Register minimal tool listing handler for worker context
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const navigateTool: Tool = {
-      name: "ninjaone_navigate",
-      description:
-        "Navigate to a NinjaOne domain to access its tools. Available domains: devices, organizations, alerts, tickets.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          domain: {
-            type: "string",
-            enum: ["devices", "organizations", "alerts", "tickets"],
-            description: "The domain to navigate to",
-          },
-        },
-        required: ["domain"],
-      },
-    };
-
-    const statusTool: Tool = {
-      name: "ninjaone_status",
-      description: "Show current navigation state and verify API credentials.",
-      inputSchema: {
-        type: "object",
-        properties: {},
-      },
-    };
-
-    return { tools: [navigateTool, statusTool] };
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });
+}
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name } = request.params;
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Tool ${name} called in worker context. Full domain handling available in HTTP transport mode.`,
-        },
-      ],
-    };
-  });
-
-  return server;
+function withCors(res: Response): Response {
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // Health endpoint
-    if (url.pathname === "/health") {
-      return new Response(
-        JSON.stringify({
-          status: "ok",
-          transport: "cloudflare-workers",
-          timestamp: new Date().toISOString(),
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
+    // CORS preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
-    // MCP endpoint
-    if (url.pathname === "/mcp") {
-      // Extract credentials from headers or env
-      const clientId =
-        request.headers.get("x-ninja-client-id") || env.NINJAONE_CLIENT_ID;
-      const clientSecret =
-        request.headers.get("x-ninja-client-secret") || env.NINJAONE_CLIENT_SECRET;
+    // Shallow, unauthenticated liveness probe.
+    if (url.pathname === "/health" || url.pathname === "/healthz") {
+      return json({ status: "ok" });
+    }
 
-      if (!clientId || !clientSecret) {
-        return new Response(
-          JSON.stringify({
-            error: "Missing credentials",
-            message:
-              "Provide X-Ninja-Client-ID and X-Ninja-Client-Secret headers, or configure environment secrets",
-            required: ["X-Ninja-Client-ID", "X-Ninja-Client-Secret"],
-          }),
-          {
-            status: 401,
-            headers: { "Content-Type": "application/json" },
-          }
+    if (url.pathname === "/mcp") {
+      const isGatewayMode = (env.AUTH_MODE ?? "env") === "gateway";
+
+      let credOverrides: NinjaOneCredentials | undefined;
+      if (isGatewayMode) {
+        const { creds, error } = resolveGatewayCredentials(
+          (name) => request.headers.get(name) ?? undefined
         );
+        if (error) {
+          return json(
+            {
+              error: "Missing credentials",
+              message: error,
+              required: ["X-Ninja-Client-ID", "X-Ninja-Client-Secret"],
+              optional: ["X-Ninja-Region"],
+            },
+            401
+          );
+        }
+        credOverrides = creds;
+      } else {
+        // env mode: build credentials from Worker secrets if present.
+        // (Absent creds are fine — tools/list still works, tools/call errors.)
+        const { creds } = buildCredentials(
+          env.NINJAONE_CLIENT_ID,
+          env.NINJAONE_CLIENT_SECRET,
+          env.NINJAONE_REGION
+        );
+        credOverrides = creds;
       }
 
-      const server = createMcpServer();
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => crypto.randomUUID(),
+      // Fresh server + transport per request (stateless).
+      const server = await createMcpServer(credOverrides);
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
         enableJsonResponse: true,
       });
-
       await server.connect(transport);
 
-      // Convert the Web Request to a Node-compatible form handled by the transport
-      // Note: In production, you would use a CF Workers-compatible adapter
-      return new Response(
-        JSON.stringify({ status: "connected", transport: "streamable-http" }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
+      try {
+        const response = await transport.handleRequest(request);
+        return withCors(response);
+      } finally {
+        await transport.close();
+        await server.close();
+      }
     }
 
-    // 404 for everything else
-    return new Response(
-      JSON.stringify({ error: "Not found", endpoints: ["/mcp", "/health"] }),
-      {
-        status: 404,
-        headers: { "Content-Type": "application/json" },
-      }
+    return json(
+      { error: "Not found", endpoints: ["/mcp", "/health"] },
+      404
     );
   },
 };
