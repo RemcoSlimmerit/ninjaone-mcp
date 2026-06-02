@@ -35,16 +35,22 @@ export type { NinjaOneCredentials };
 
 /**
  * Collect all domain tools for flattened tool listing.
+ *
+ * The tool set is static and credential-independent, but a fresh server is
+ * created per request (for credential isolation), so the assembled list is
+ * memoized at module scope to avoid rebuilding it on every request.
  */
+let cachedDomainTools: Tool[] | undefined;
 async function getAllDomainTools(): Promise<Tool[]> {
-  const allTools: Tool[] = [];
-  const domains = getAvailableDomains();
+  if (cachedDomainTools) return cachedDomainTools;
 
-  for (const domain of domains) {
+  const allTools: Tool[] = [];
+  for (const domain of getAvailableDomains()) {
     const handler = await getDomainHandler(domain);
     allTools.push(...handler.getTools());
   }
 
+  cachedDomainTools = allTools;
   return allTools;
 }
 
