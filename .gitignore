@@ -6,3 +6,4 @@ dist/
 coverage/
 .npmrc.docker
 graphify-out/
+.wrangler/

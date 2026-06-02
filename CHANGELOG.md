@@ -10,6 +10,18 @@
   build-time `GITHUB_TOKEN` secret, and the Cloudflare entrypoint now bundles
   directly from `src/worker.ts`.
 
+### Added
+
+- **Cloudflare Workers now serves the full MCP server.** `src/worker.ts` was a
+  placeholder that returned a stub response; it now uses the MCP SDK's
+  `WebStandardStreamableHTTPServerTransport` to serve the complete tool set over
+  `/mcp`, reusing the same `createMcpServer()` factory as the stdio and Node HTTP
+  entrypoints (extracted into `src/mcp-server.ts` — no duplicated tool logic).
+  Supports both env-var credentials and `AUTH_MODE=gateway` header credentials,
+  plus CORS preflight and a `/health` probe. Verified end-to-end on `workerd`
+  (`wrangler dev`): `initialize`, `tools/list` (24 tools), and `tools/call` all
+  return correct JSON-RPC responses.
+
 ### Changed
 
 - The package is now published to the GitHub Packages npm registry

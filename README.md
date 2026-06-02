@@ -27,11 +27,13 @@ A Model Context Protocol (MCP) server for interacting with NinjaOne, featuring a
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wyre-technology/ninjaone-mcp)
 
 > [!NOTE]
-> The DigitalOcean target builds the full Docker image and runs the complete MCP
-> server over HTTP — this is the recommended path for operators. The Cloudflare
-> Workers target is currently a thin entrypoint and is best suited to gateway-style
-> deployments; for a full self-hosted server prefer DigitalOcean or the prebuilt
-> container image (`ghcr.io/wyre-technology/ninjaone-mcp`).
+> Both targets run the **full** MCP server. DigitalOcean builds the Docker image and
+> serves it over HTTP; Cloudflare Workers serves the same server via the SDK's Web
+> Standard Streamable HTTP transport (`src/worker.ts`). After deploying, set your
+> NinjaOne credentials as secrets — `NINJAONE_CLIENT_ID`, `NINJAONE_CLIENT_SECRET`,
+> and optionally `NINJAONE_REGION` — or set `AUTH_MODE=gateway` to take credentials
+> per-request from `X-Ninja-*` headers. The MCP endpoint is `/mcp`; `/health` is an
+> unauthenticated liveness probe.
 
 ## Architecture
 
