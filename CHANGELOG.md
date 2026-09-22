@@ -2,6 +2,26 @@
 
 ### Fixed
 
+- **`ninjaone_organizations_devices` ignored `device_class`.** The tool
+  accepted the filter and logged it, then called
+  `GET /v2/organization/{id}/devices` with only `pageSize`. `device_class`
+  is now sent upstream as `df=class=<NodeClass>`, the same expression
+  `ninjaone_devices_list` uses on `GET /v2/devices`. A named `nodeClass`
+  query parameter is ignored, so sending the name alone still returned
+  other classes (a `MAC` request for organization 9 came back as
+  `WINDOWS_SERVER`). The published organization-devices operation only
+  documents `pageSize` and `after`, so the page is still filtered by class
+  and online in case `df` is ignored there too. The same `df` is sent when
+  `ninjaone_devices_list` is scoped to an organization.
+  The `device_class` enum on both tools now matches NinjaOne node classes
+  (`LINUX`, `VMWARE_VM`, and `NMS` were never valid; Linux, VMware, and
+  network devices use `LINUX_WORKSTATION` / `LINUX_SERVER`,
+  `VMWARE_VM_HOST` / `VMWARE_VM_GUEST`, and the `NMS_*` classes). The
+  response is `{ devices, count, hasMore, cursor }` instead of a bare
+  array. NinjaOne does not return a total or a next-page token; `hasMore`
+  is true when the page is full, and `cursor` is the last device id to
+  pass back. `count` is matches in this page, which can be smaller than
+  the page when a filter is set and `hasMore` is still true.
 - **`ninjaone_status` and the unknown-tool error advised calling
   `ninjaone_navigate` to discover tools without qualification.** Conduit
   suppresses `*_navigate` / `*_back` at the gateway (tier filtering lives in
@@ -45,7 +65,9 @@
   it. The probe also hardcoded port 8080 while `MCP_HTTP_PORT` is
   configurable, so changing the port landed in the same permanently-unhealthy
   state. Both the Dockerfile `HEALTHCHECK` and `docker-compose.yml` now probe
-  `127.0.0.1` on `$MCP_HTTP_PORT` (default `8080`).
+  `127.0.0.1` on `MCP_HTTP_PORT` (default `8080`). Compose writes `$$` so it
+  does not substitute the host's port before the container shell reads
+  `MCP_HTTP_PORT`.
 
 ### Security
 
